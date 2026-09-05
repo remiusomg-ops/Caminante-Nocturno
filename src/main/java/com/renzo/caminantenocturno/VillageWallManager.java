@@ -2,371 +2,420 @@ package com.renzo.caminantenocturno;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
+import net.minecraft.core.HolderSet;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.StructureTags;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.LadderBlock;
 import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Half;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.level.levelgen.structure.PoolElementStructurePiece;
+import net.minecraft.world.level.levelgen.structure.Structure;
+import net.minecraft.world.level.levelgen.structure.StructurePiece;
+import net.minecraft.world.level.levelgen.structure.StructureStart;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.level.ChunkEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
 
-@Mod.EventBusSubscriber(modid=CaminanteNocturnoMod.MODID,bus=Mod.EventBusSubscriber.Bus.FORGE)
+/**
+ * Village fortification system adapted from Astryxion's Witchery-Villages
+ * (Forge 1.20.1), GPL-3.0. Modified for Caminante Nocturno on 2026-09-05:
+ * guards/keeps/towers/config were removed and only the terrain-following
+ * village perimeter logic was retained.
+ */
+@Mod.EventBusSubscriber(modid = CaminanteNocturnoMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class VillageWallManager {
-    // Las murallas dinámicas quedan desactivadas: serán sustituidas por piezas de estructura rígidas.
-    private static final int CHECK_INTERVAL = 100;
-    private static final int SEARCH_RADIUS_CHUNKS = 16;
+    private static final int DELAY_TICKS = 100;
+    private static final int DEDUP_RADIUS = 80;
+    private static final int BLOCKS_PER_TICK = 600;
+    private static final int MAX_SPAN = 384;
+    private static final int SOLID_THRESHOLD = 9;
+    private static final int SHALLOW_WATER_PROBE = 4;
 
-    private static final int WALL_RADIUS = 52;
-    private static final int BODY_THICKNESS = 3;       // cuerpo central: 3 bloques
-    private static final int TOTAL_WIDTH = 5;          // base y coronacion: 5 bloques
-    private static final int BODY_HEIGHT = 6;          // hasta camino de ronda
-    private static final int BUTTRESS_SPACING = 6;
-    private static final int SEGMENT_LENGTH = 6;
-    private static final int PASSAGE_HALF_WIDTH = 2;
+    private static final List<PendingVillage> PENDING = new ArrayList<>();
+    private static final LinkedHashMap<PlacementKey, PendingBlock> BLOCK_QUEUE = new LinkedHashMap<>();
 
-    private static final Set<Long> SESSION_SEEN = new HashSet<>();
+    private VillageWallManager() {}
+
+    @SubscribeEvent
+    public static void onChunkLoad(ChunkEvent.Load event) {
+        if (!(event.getLevel() instanceof ServerLevel level) || !(event.getChunk() instanceof LevelChunk chunk)) return;
+
+        var registry = level.registryAccess().registryOrThrow(Registries.STRUCTURE);
+        for (StructureStart start : chunk.getAllStarts().values()) {
+            if (!start.isValid()) continue;
+            boolean village = registry.getResourceKey(start.getStructure())
+                    .flatMap(registry::getHolder)
+                    .map(holder -> holder.is(StructureTags.VILLAGE))
+                    .orElse(false);
+            if (!village) continue;
+
+            BlockPos origin = start.getPieces().isEmpty()
+                    ? start.getBoundingBox().getCenter()
+                    : start.getPieces().get(0).getBoundingBox().getCenter();
+            schedule(level, origin);
+            return;
+        }
+    }
 
     @SubscribeEvent
     public static void serverTick(TickEvent.ServerTickEvent event) {
-        if (true) return; // Beta 23: desactivado mientras se usa el nuevo sistema de estructuras
         if (event.phase != TickEvent.Phase.END) return;
 
-        for (ServerLevel level : event.getServer().getAllLevels()) {
-            if (!level.dimension().equals(net.minecraft.world.level.Level.OVERWORLD)) continue;
-            if (level.getGameTime() % CHECK_INTERVAL != 0) continue;
+        tickPlacements();
+        MinecraftServer server = event.getServer();
+        long now = server.getTickCount();
 
-            VillageWallSavedData data = VillageWallSavedData.get(level);
+        if (!BLOCK_QUEUE.isEmpty()) return;
 
-            for (ServerPlayer player : level.players()) {
-                for (int ox = -8; ox <= 8; ox += 8) {
-                    for (int oz = -8; oz <= 8; oz += 8) {
-                        BlockPos origin = player.blockPosition().offset(ox * 16, 0, oz * 16);
-                        BlockPos center = level.findNearestMapStructure(
-                                StructureTags.VILLAGE, origin, SEARCH_RADIUS_CHUNKS, false);
-                        if (center == null) continue;
+        Iterator<PendingVillage> it = PENDING.iterator();
+        while (it.hasNext()) {
+            PendingVillage pending = it.next();
+            if (now < pending.executeTick) continue;
+            it.remove();
 
-                        long key = key(center);
-                        if (!SESSION_SEEN.add(key) || data.isWalled(key)) continue;
+            if (VillageWallSavedData.get(pending.level).isNearWalled(pending.center, DEDUP_RADIUS)) continue;
+            if (generateForVillage(pending.level, pending.center)) {
+                VillageWallSavedData.get(pending.level).markWalled(pending.center.asLong());
+            }
+            break; // one village start per tick
+        }
+    }
 
-                        buildWall(level, center);
-                        data.markWalled(key);
-                    }
+    private static void schedule(ServerLevel level, BlockPos center) {
+        if (VillageWallSavedData.get(level).isNearWalled(center, DEDUP_RADIUS)) return;
+        long r2 = (long)DEDUP_RADIUS * DEDUP_RADIUS;
+        for (PendingVillage p : PENDING) {
+            if (p.level == level && p.center.distSqr(center) <= r2) return;
+        }
+        PENDING.add(new PendingVillage(level, center.immutable(), level.getServer().getTickCount() + DELAY_TICKS));
+    }
+
+    private static boolean generateForVillage(ServerLevel level, BlockPos center) {
+        StructureStart start = findVillageStart(level, center);
+        if (!start.isValid() || start.getPieces().isEmpty()) return false;
+
+        List<Bounds> streets = new ArrayList<>();
+        List<Bounds> buildings = new ArrayList<>();
+        long ySum = 0;
+        int yCount = 0;
+
+        for (StructurePiece piece : start.getPieces()) {
+            BoundingBox box = piece.getBoundingBox();
+            ySum += box.minY();
+            yCount++;
+            if (isStreetPiece(piece)) streets.add(new Bounds(box, 20, 7));
+            else buildings.add(new Bounds(box, 10, 7));
+        }
+
+        List<Bounds> bounds = streets.isEmpty() ? buildings : streets;
+        if (bounds.isEmpty()) bounds = List.of(new Bounds(start.getBoundingBox(), 10, 7));
+
+        int yCoord = yCount == 0 ? center.getY() : (int)(ySum / yCount);
+        return buildPlan(level, bounds, center.getX(), yCoord, center.getZ());
+    }
+
+    private static StructureStart findVillageStart(ServerLevel level, BlockPos center) {
+        StructureStart start = level.structureManager().getStructureWithPieceAt(center, StructureTags.VILLAGE);
+        if (start.isValid()) return start;
+
+        Optional<HolderSet.Named<Structure>> villages = level.registryAccess()
+                .registryOrThrow(Registries.STRUCTURE).getTag(StructureTags.VILLAGE);
+        if (villages.isEmpty()) return StructureStart.INVALID_START;
+
+        for (Holder<Structure> holder : villages.get()) {
+            start = level.structureManager().getStructureAt(center, holder.value());
+            if (start.isValid()) return start;
+        }
+        return StructureStart.INVALID_START;
+    }
+
+    private static boolean isStreetPiece(StructurePiece piece) {
+        String text = (piece instanceof PoolElementStructurePiece pool
+                ? pool.getElement().toString() : piece.toString()).toLowerCase(Locale.ROOT);
+        return text.contains("/streets/") || text.contains("/terminators/") || text.contains("street");
+    }
+
+    private static boolean buildPlan(ServerLevel level, List<Bounds> boundsList, int xCoord, int yCoord, int zCoord) {
+        int minX = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+
+        for (Bounds b : boundsList) {
+            minX = Math.min(minX, b.minX); minZ = Math.min(minZ, b.minZ);
+            maxX = Math.max(maxX, b.maxX); maxZ = Math.max(maxZ, b.maxZ);
+        }
+        if (minX == Integer.MAX_VALUE) return false;
+
+        if (maxX - minX > MAX_SPAN || maxZ - minZ > MAX_SPAN) {
+            int half = MAX_SPAN / 2;
+            minX = Math.max(minX, xCoord - half); maxX = Math.min(maxX, xCoord + half);
+            minZ = Math.max(minZ, zCoord - half); maxZ = Math.min(maxZ, zCoord + half);
+        }
+        if (maxX - minX < 8 || maxZ - minZ < 8) return false;
+
+        byte[][] grid = new byte[maxX - minX + 3][maxZ - minZ + 3];
+
+        for (Bounds b : boundsList) {
+            int wMid = (b.maxX - b.minX + 1) / 2 + b.minX - 1;
+            int hMid = (b.maxZ - b.minZ + 1) / 2 + b.minZ - 1;
+            for (int x = b.minX; x <= b.maxX; x++) {
+                for (int z = b.minZ; z <= b.maxZ; z++) {
+                    int gx = x - minX + 1, gz = z - minZ + 1;
+                    if (gx <= 0 || gz <= 0 || gx >= grid.length - 1 || gz >= grid[gx].length - 1) continue;
+                    if (!b.ew && (z == b.minZ || z == b.maxZ) && x >= wMid - 1 && x <= wMid + 1) grid[gx][gz] = 3;
+                    else if (b.ew && (x == b.minX || x == b.maxX) && z >= hMid - 1 && z <= hMid + 1) grid[gx][gz] = 3;
+                    else grid[gx][gz] = 2;
+                }
+            }
+        }
+
+        connectSmallGaps(grid);
+        fillEnclosedHoles(grid);
+
+        for (int x = 1; x < grid.length - 1; x++) {
+            for (int z = 1; z < grid[x].length - 1; z++) {
+                boolean surrounded = true;
+                for (int dx = -1; dx <= 1 && surrounded; dx++)
+                    for (int dz = -1; dz <= 1; dz++)
+                        if ((dx != 0 || dz != 0) && grid[x + dx][z + dz] == 0) { surrounded = false; break; }
+                if (surrounded) grid[x][z] = 1;
+            }
+        }
+
+        int[][] foundations = new int[grid.length][grid[0].length];
+        int[][] heights = new int[grid.length][grid[0].length];
+
+        for (int x = 1; x < grid.length - 1; x++) {
+            for (int z = 1; z < grid[x].length - 1; z++) {
+                if (grid[x][z] < 2) continue;
+                int wx = minX + x, wz = minZ + z;
+                level.getChunk(wx >> 4, wz >> 4);
+                int foundation = findFoundationY(level, wx, wz, yCoord);
+                foundations[x][z] = foundation;
+                heights[x][z] = foundation + 9;
+            }
+        }
+
+        for (int pass = 0; pass < 6; pass++) {
+            int[][] next = new int[heights.length][heights[0].length];
+            for (int x = 0; x < heights.length; x++) System.arraycopy(heights[x], 0, next[x], 0, heights[x].length);
+            for (int x = 1; x < grid.length - 1; x++) {
+                for (int z = 1; z < grid[x].length - 1; z++) {
+                    if (grid[x][z] < 2 || heights[x][z] == 0) continue;
+                    int near = maxNeighborHeight(grid, heights, x, z);
+                    if (near == Integer.MIN_VALUE) continue;
+                    if (near > heights[x][z]) next[x][z] = near - 1;
+                    else if (near < heights[x][z]) next[x][z] = near + 1;
+                }
+            }
+            heights = next;
+        }
+
+        for (int x = 1; x < grid.length - 1; x++) {
+            for (int z = 1; z < grid[x].length - 1; z++) {
+                if (grid[x][z] < 2) continue;
+                placeWallColumn(level, grid, foundations, heights, minX, minZ, x, z);
+            }
+        }
+        return true;
+    }
+
+    private static void connectSmallGaps(byte[][] grid) {
+        int range = 7;
+        for (int x = 1; x < grid.length - range; x++) {
+            for (int z = 1; z < grid[x].length - range; z++) {
+                if (grid[x][z] != 2) continue;
+                for (int p = 1; p < range; p++) {
+                    if (grid[x + p][z] == 2 && grid[x + p - 1][z] == 0)
+                        for (int q = p; q > 0; q--) grid[x + q][z] = 2;
+                    if (grid[x][z + p] == 2 && grid[x][z + p - 1] == 0)
+                        for (int q = p; q > 0; q--) grid[x][z + q] = 2;
                 }
             }
         }
     }
 
-    private static long key(BlockPos p) {
-        return (((long)p.getX()) & 0xffffffffL) << 32 | (((long)p.getZ()) & 0xffffffffL);
+    private static void fillEnclosedHoles(byte[][] grid) {
+        int w = grid.length, d = grid[0].length;
+        boolean[][] outside = new boolean[w][d];
+        ArrayDeque<int[]> q = new ArrayDeque<>();
+        for (int x = 0; x < w; x++) { markOutside(grid, outside, q, x, 0); markOutside(grid, outside, q, x, d - 1); }
+        for (int z = 0; z < d; z++) { markOutside(grid, outside, q, 0, z); markOutside(grid, outside, q, w - 1, z); }
+        while (!q.isEmpty()) {
+            int[] p = q.removeFirst();
+            markOutside(grid, outside, q, p[0] + 1, p[1]); markOutside(grid, outside, q, p[0] - 1, p[1]);
+            markOutside(grid, outside, q, p[0], p[1] + 1); markOutside(grid, outside, q, p[0], p[1] - 1);
+        }
+        for (int x = 1; x < w - 1; x++) for (int z = 1; z < d - 1; z++)
+            if (grid[x][z] == 0 && !outside[x][z]) grid[x][z] = 2;
     }
 
-    private static void buildWall(ServerLevel level, BlockPos c) {
-        int minX = c.getX() - WALL_RADIUS;
-        int maxX = c.getX() + WALL_RADIUS;
-        int minZ = c.getZ() - WALL_RADIUS;
-        int maxZ = c.getZ() + WALL_RADIUS;
-
-        int nwBase = cornerBase(level, minX + 3, minZ + 3);
-        int neBase = cornerBase(level, maxX - 3, minZ + 3);
-        int swBase = cornerBase(level, minX + 3, maxZ - 3);
-        int seBase = cornerBase(level, maxX - 3, maxZ - 3);
-
-        buildHorizontal(level, c, minX, maxX, minZ, +1);
-        buildHorizontal(level, c, minX, maxX, maxZ, -1);
-        buildVertical(level, c, minZ, maxZ, minX, +1);
-        buildVertical(level, c, minZ, maxZ, maxX, -1);
-
-        buildCornerTower(level, minX + 3, minZ + 3, nwBase);
-        buildCornerTower(level, maxX - 3, minZ + 3, neBase);
-        buildCornerTower(level, minX + 3, maxZ - 3, swBase);
-        buildCornerTower(level, maxX - 3, maxZ - 3, seBase);
+    private static void markOutside(byte[][] grid, boolean[][] outside, ArrayDeque<int[]> q, int x, int z) {
+        if (x < 0 || z < 0 || x >= grid.length || z >= grid[x].length || grid[x][z] != 0 || outside[x][z]) return;
+        outside[x][z] = true; q.add(new int[]{x,z});
     }
 
-    private static void buildHorizontal(ServerLevel level, BlockPos c, int minX, int maxX, int outerZ, int inward) {
-        Integer previousBase = null;
+    private static void placeWallColumn(ServerLevel level, byte[][] grid, int[][] foundations, int[][] heights,
+                                        int minX, int minZ, int k, int z) {
+        int wx = minX + k, wz = minZ + z;
+        int top = heights[k][z];
+        int bottom = getWallBottomY(level, wx, wz, foundations[k][z]);
+        if (top <= bottom) return;
 
-        for (int start = minX; start <= maxX; start += SEGMENT_LENGTH) {
-            int end = Math.min(start + SEGMENT_LENGTH - 1, maxX);
-            int sampled = sampleHorizontalSegment(level, start, end, outerZ, inward);
+        boolean n = grid[k][z-1] >= 2, s = grid[k][z+1] >= 2, e = grid[k+1][z] >= 2, w = grid[k-1][z] >= 2;
+        boolean gate = grid[k][z] == 3;
 
-            // Evita saltos absurdos entre piezas: cada tramo solo puede variar 1 bloque.
-            int baseY = previousBase == null
-                    ? sampled
-                    : Math.max(previousBase - 1, Math.min(previousBase + 1, sampled));
-            previousBase = baseY;
+        for (int y = top; y > bottom; y--) {
+            if (gate && y <= bottom + 3) continue; // open passage, no wooden gate
 
-            for (int x = start; x <= end; x++) {
-                boolean passage = Math.abs(x - c.getX()) <= PASSAGE_HALF_WIDTH;
-                buildHorizontalSection(level, x, outerZ, inward, baseY, passage, x - minX);
+            queue(level, wx, y, wz, Blocks.STONE_BRICKS.defaultBlockState());
+            if (!n) queue(level, wx, y, wz-1, Blocks.STONE_BRICKS.defaultBlockState());
+            if (!s) queue(level, wx, y, wz+1, Blocks.STONE_BRICKS.defaultBlockState());
+            if (!e) queue(level, wx+1, y, wz, Blocks.STONE_BRICKS.defaultBlockState());
+            if (!w) queue(level, wx-1, y, wz, Blocks.STONE_BRICKS.defaultBlockState());
+
+            if (!n && !e) queue(level, wx+1, y, wz-1, Blocks.STONE_BRICKS.defaultBlockState());
+            if (!n && !w) queue(level, wx-1, y, wz-1, Blocks.STONE_BRICKS.defaultBlockState());
+            if (!s && !e) queue(level, wx+1, y, wz+1, Blocks.STONE_BRICKS.defaultBlockState());
+            if (!s && !w) queue(level, wx-1, y, wz+1, Blocks.STONE_BRICKS.defaultBlockState());
+        }
+
+        // Witchery-style upper lip / crenellation.
+        if (!n) {
+            queue(level, wx, top+1, wz-2, stairState(Direction.EAST));
+            queue(level, wx, top, wz-2, Blocks.STONE_BRICKS.defaultBlockState());
+        }
+        if (!s) {
+            queue(level, wx, top+1, wz+2, stairState(Direction.EAST));
+            queue(level, wx, top, wz+2, Blocks.STONE_BRICKS.defaultBlockState());
+        }
+        if (!e) {
+            queue(level, wx+2, top+1, wz, stairState(Direction.SOUTH));
+            queue(level, wx+2, top, wz, Blocks.STONE_BRICKS.defaultBlockState());
+        }
+        if (!w) {
+            queue(level, wx-2, top+1, wz, stairState(Direction.SOUTH));
+            queue(level, wx-2, top, wz, Blocks.STONE_BRICKS.defaultBlockState());
+        }
+    }
+
+    private static BlockState stairState(Direction facing) {
+        return Blocks.STONE_BRICK_STAIRS.defaultBlockState()
+                .setValue(StairBlock.FACING, facing)
+                .setValue(StairBlock.HALF, Half.BOTTOM);
+    }
+
+    private static int getWallBottomY(Level level, int x, int z, int foundation) {
+        int surface = level.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x, z);
+        int ocean = level.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z);
+        return surface - ocean <= 1 ? foundation : ocean;
+    }
+
+    private static int findFoundationY(Level level, int x, int z, int yCoord) {
+        int surface = level.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x, z);
+        int top = Math.min(surface + 2, yCoord + 16);
+        int bottom = Math.max(level.getMinBuildHeight() + 1, Math.min(yCoord, surface) - 40);
+        if (top < bottom) { top = surface; bottom = Math.max(level.getMinBuildHeight() + 1, surface - 16); }
+
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (int y = top; y >= bottom; y--) {
+            if (hasFluidAt(level, x, z, y, cursor)) {
+                for (int probe = y; probe > y - SHALLOW_WATER_PROBE && probe >= bottom; probe--)
+                    if (!hasFluidAt(level, x, z, probe, cursor) && countSolidAt(level, x, z, probe, cursor) >= SOLID_THRESHOLD) return probe;
+                return y;
+            }
+            if (countSolidAt(level, x, z, y, cursor) >= SOLID_THRESHOLD) return y;
+        }
+        return Math.max(bottom, surface - 1);
+    }
+
+    private static int maxNeighborHeight(byte[][] grid, int[][] heights, int x, int z) {
+        int max = Integer.MIN_VALUE;
+        if (grid[x-1][z] >= 2 && heights[x-1][z] != 0) max = Math.max(max, heights[x-1][z]);
+        if (grid[x+1][z] >= 2 && heights[x+1][z] != 0) max = Math.max(max, heights[x+1][z]);
+        if (grid[x][z-1] >= 2 && heights[x][z-1] != 0) max = Math.max(max, heights[x][z-1]);
+        if (grid[x][z+1] >= 2 && heights[x][z+1] != 0) max = Math.max(max, heights[x][z+1]);
+        return max;
+    }
+
+    private static boolean hasFluidAt(Level level, int x, int z, int y, BlockPos.MutableBlockPos cursor) {
+        for (int dx=x-1; dx<=x+1; dx++) for (int dz=z-1; dz<=z+1; dz++) {
+            FluidState fluid = level.getFluidState(cursor.set(dx,y,dz));
+            if (!fluid.isEmpty()) return true;
+        }
+        return false;
+    }
+
+    private static int countSolidAt(Level level, int x, int z, int y, BlockPos.MutableBlockPos cursor) {
+        int count = 0;
+        for (int dx=x-1; dx<=x+1; dx++) for (int dz=z-1; dz<=z+1; dz++) {
+            BlockState state = level.getBlockState(cursor.set(dx,y,dz));
+            if (!state.isAir() && !canReplaceForWall(state)) count++;
+        }
+        return count;
+    }
+
+    private static boolean canReplaceForWall(BlockState state) {
+        return state.isAir() || state.canBeReplaced() || !state.getFluidState().isEmpty()
+                || state.is(BlockTags.LEAVES) || state.is(BlockTags.REPLACEABLE_BY_TREES);
+    }
+
+    private static void queue(ServerLevel level, int x, int y, int z, BlockState state) {
+        BlockPos pos = new BlockPos(x,y,z);
+        BLOCK_QUEUE.put(new PlacementKey(level, pos.asLong()), new PendingBlock(level, pos, state));
+    }
+
+    private static void tickPlacements() {
+        int placed = 0;
+        Iterator<PendingBlock> it = BLOCK_QUEUE.values().iterator();
+        while (it.hasNext() && placed < BLOCKS_PER_TICK) {
+            PendingBlock p = it.next();
+            p.level.getChunk(p.pos.getX() >> 4, p.pos.getZ() >> 4);
+            BlockState existing = p.level.getBlockState(p.pos);
+            if (!isProtected(existing)) p.level.setBlock(p.pos, p.state, Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
+            it.remove();
+            placed++;
+        }
+    }
+
+    private static boolean isProtected(BlockState state) {
+        return state.is(BlockTags.PLANKS) || state.is(BlockTags.LOGS) || state.is(BlockTags.WOODEN_STAIRS)
+                || state.is(BlockTags.WOODEN_SLABS) || state.is(BlockTags.DOORS) || state.is(BlockTags.BEDS)
+                || state.is(BlockTags.FENCES) || state.is(Blocks.GLASS) || state.is(Blocks.GLASS_PANE)
+                || state.is(Blocks.CHEST) || state.is(Blocks.BARREL) || state.is(Blocks.BELL)
+                || state.is(Blocks.FARMLAND) || state.is(Blocks.COMPOSTER) || state.is(Blocks.CRAFTING_TABLE)
+                || state.is(Blocks.FURNACE) || state.is(Blocks.LECTERN);
+    }
+
+    private static final class Bounds {
+        final int minX,minZ,maxX,maxZ; final boolean ew;
+        Bounds(BoundingBox box, int expansionX, int expansionZ) {
+            ew = box.maxX() - box.minX() > box.maxZ() - box.minZ();
+            if (ew) {
+                minX = box.minX() - expansionZ; maxX = box.maxX() + expansionZ;
+                minZ = box.minZ() - expansionX; maxZ = box.maxZ() + expansionX;
+            } else {
+                minX = box.minX() - expansionX; maxX = box.maxX() + expansionX;
+                minZ = box.minZ() - expansionZ; maxZ = box.maxZ() + expansionZ;
             }
         }
     }
 
-    private static void buildVertical(ServerLevel level, BlockPos c, int minZ, int maxZ, int outerX, int inward) {
-        Integer previousBase = null;
-
-        for (int start = minZ; start <= maxZ; start += SEGMENT_LENGTH) {
-            int end = Math.min(start + SEGMENT_LENGTH - 1, maxZ);
-            int sampled = sampleVerticalSegment(level, start, end, outerX, inward);
-
-            int baseY = previousBase == null
-                    ? sampled
-                    : Math.max(previousBase - 1, Math.min(previousBase + 1, sampled));
-            previousBase = baseY;
-
-            for (int z = start; z <= end; z++) {
-                boolean passage = Math.abs(z - c.getZ()) <= PASSAGE_HALF_WIDTH;
-                buildVerticalSection(level, outerX, z, inward, baseY, passage, z - minZ);
-            }
-        }
-    }
-
-    private static int sampleHorizontalSegment(ServerLevel level, int start, int end, int outerZ, int inward) {
-        int[] heights = new int[end - start + 1];
-        int i = 0;
-        for (int x = start; x <= end; x++) {
-            heights[i++] = naturalGround(level, x, outerZ + inward);
-        }
-        java.util.Arrays.sort(heights);
-        return heights[heights.length / 2];
-    }
-
-    private static int sampleVerticalSegment(ServerLevel level, int start, int end, int outerX, int inward) {
-        int[] heights = new int[end - start + 1];
-        int i = 0;
-        for (int z = start; z <= end; z++) {
-            heights[i++] = naturalGround(level, outerX + inward, z);
-        }
-        java.util.Arrays.sort(heights);
-        return heights[heights.length / 2];
-    }
-
-    // Seccion exacta de la referencia vista de frente:
-    // y+1 = base de 5 bloques
-    // y+2..y+5 = cuerpo central de 3
-    // y+6 = coronacion de 5
-    // y+7 = almenas solo en los dos bordes, alternadas
-    private static void buildHorizontalSection(ServerLevel level, int x, int outerZ, int inward,
-                                               int baseY, boolean passage, int index) {
-        if (passage) {
-            clearHorizontalPassage(level, x, outerZ, inward, baseY);
-            return;
-        }
-
-        int bodyStart = outerZ;
-        int outerFoot = outerZ - inward;
-        int innerFoot = outerZ + inward * 3;
-
-        // Base ancha de cinco.
-        for (int d = -1; d <= 3; d++) {
-            placeFoundationAndBlock(level, x, outerZ + inward * d, baseY + 1);
-        }
-
-        // Cuerpo central de tres bloques de grosor.
-        for (int dy = 2; dy <= 5; dy++) {
-            for (int d = 0; d <= 2; d++) {
-                placeSolid(level, x, bodyStart + inward * d, baseY + dy, index, dy);
-            }
-        }
-
-        // Cornisa/camino de ronda: vuelve a cinco bloques.
-        for (int d = -1; d <= 3; d++) {
-            level.setBlock(new BlockPos(x, baseY + BODY_HEIGHT, outerZ + inward * d),
-                    Blocks.STONE_BRICKS.defaultBlockState(), 3);
-        }
-
-        // Piso plano superior interior de 3 bloques.
-        for (int d = 0; d <= 2; d++) {
-            level.setBlock(new BlockPos(x, baseY + BODY_HEIGHT + 1, outerZ + inward * d),
-                    Blocks.STONE_BRICK_SLAB.defaultBlockState(), 3);
-        }
-
-        // Parapetos/almenas en ambos bordes, 2 llenos / 1 hueco.
-        if (Math.floorMod(index, 3) != 2) {
-            level.setBlock(new BlockPos(x, baseY + BODY_HEIGHT + 1, outerFoot),
-                    Blocks.STONE_BRICKS.defaultBlockState(), 3);
-            level.setBlock(new BlockPos(x, baseY + BODY_HEIGHT + 1, innerFoot),
-                    Blocks.STONE_BRICKS.defaultBlockState(), 3);
-        }
-
-        if (Math.floorMod(index, BUTTRESS_SPACING) == 0) {
-            buildHorizontalButtress(level, x, outerZ, inward, baseY);
-        }
-    }
-
-    private static void buildVerticalSection(ServerLevel level, int outerX, int z, int inward,
-                                             int baseY, boolean passage, int index) {
-        if (passage) {
-            clearVerticalPassage(level, outerX, z, inward, baseY);
-            return;
-        }
-
-        int outerFoot = outerX - inward;
-        int innerFoot = outerX + inward * 3;
-
-        for (int d = -1; d <= 3; d++) {
-            placeFoundationAndBlock(level, outerX + inward * d, z, baseY + 1);
-        }
-
-        for (int dy = 2; dy <= 5; dy++) {
-            for (int d = 0; d <= 2; d++) {
-                placeSolid(level, outerX + inward * d, z, baseY + dy, index, dy);
-            }
-        }
-
-        for (int d = -1; d <= 3; d++) {
-            level.setBlock(new BlockPos(outerX + inward * d, baseY + BODY_HEIGHT, z),
-                    Blocks.STONE_BRICKS.defaultBlockState(), 3);
-        }
-
-        for (int d = 0; d <= 2; d++) {
-            level.setBlock(new BlockPos(outerX + inward * d, baseY + BODY_HEIGHT + 1, z),
-                    Blocks.STONE_BRICK_SLAB.defaultBlockState(), 3);
-        }
-
-        if (Math.floorMod(index, 3) != 2) {
-            level.setBlock(new BlockPos(outerFoot, baseY + BODY_HEIGHT + 1, z),
-                    Blocks.STONE_BRICKS.defaultBlockState(), 3);
-            level.setBlock(new BlockPos(innerFoot, baseY + BODY_HEIGHT + 1, z),
-                    Blocks.STONE_BRICKS.defaultBlockState(), 3);
-        }
-
-        if (Math.floorMod(index, BUTTRESS_SPACING) == 0) {
-            buildVerticalButtress(level, outerX, z, inward, baseY);
-        }
-    }
-
-    private static void placeFoundationAndBlock(ServerLevel level, int x, int z, int targetY) {
-        int ground = naturalGround(level, x, z);
-        for (int y = ground; y <= targetY; y++) {
-            level.setBlock(new BlockPos(x, y, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
-        }
-    }
-
-    private static void placeSolid(ServerLevel level, int x, int z, int y, int index, int dy) {
-        BlockState block = (dy == 4 && Math.floorMod(index, 13) == 0)
-                ? Blocks.CRACKED_STONE_BRICKS.defaultBlockState()
-                : Blocks.STONE_BRICKS.defaultBlockState();
-        level.setBlock(new BlockPos(x, y, z), block, 3);
-    }
-
-    // Contrafuerte pequeño de la foto: escalonado, no columna alta.
-    private static void buildHorizontalButtress(ServerLevel level, int x, int outerZ, int inward, int baseY) {
-        int z1 = outerZ - inward * 2;
-        int z2 = outerZ - inward * 3;
-
-        placeFoundationAndBlock(level, x, z1, baseY + 2);
-        placeFoundationAndBlock(level, x, z2, baseY + 1);
-
-        BlockState stair = Blocks.STONE_BRICK_STAIRS.defaultBlockState()
-                .setValue(StairBlock.FACING, inward > 0 ? Direction.NORTH : Direction.SOUTH);
-        level.setBlock(new BlockPos(x, baseY + 2, z2), stair, 3);
-    }
-
-    private static void buildVerticalButtress(ServerLevel level, int outerX, int z, int inward, int baseY) {
-        int x1 = outerX - inward * 2;
-        int x2 = outerX - inward * 3;
-
-        placeFoundationAndBlock(level, x1, z, baseY + 2);
-        placeFoundationAndBlock(level, x2, z, baseY + 1);
-
-        BlockState stair = Blocks.STONE_BRICK_STAIRS.defaultBlockState()
-                .setValue(StairBlock.FACING, inward > 0 ? Direction.WEST : Direction.EAST);
-        level.setBlock(new BlockPos(x2, baseY + 2, z), stair, 3);
-    }
-
-    private static void clearHorizontalPassage(ServerLevel level, int x, int outerZ, int inward, int baseY) {
-        for (int d = -3; d <= 4; d++) {
-            int z = outerZ + inward * d;
-            for (int y = baseY + 1; y <= baseY + BODY_HEIGHT + 3; y++) {
-                level.setBlock(new BlockPos(x, y, z), Blocks.AIR.defaultBlockState(), 3);
-            }
-        }
-    }
-
-    private static void clearVerticalPassage(ServerLevel level, int outerX, int z, int inward, int baseY) {
-        for (int d = -3; d <= 4; d++) {
-            int x = outerX + inward * d;
-            for (int y = baseY + 1; y <= baseY + BODY_HEIGHT + 3; y++) {
-                level.setBlock(new BlockPos(x, y, z), Blocks.AIR.defaultBlockState(), 3);
-            }
-        }
-    }
-
-    private static int cornerBase(ServerLevel level, int cx, int cz) {
-        int base = level.getMinBuildHeight();
-        for (int x = cx - 3; x <= cx + 3; x++) {
-            for (int z = cz - 3; z <= cz + 3; z++) {
-                base = Math.max(base, naturalGround(level, x, z));
-            }
-        }
-        return base;
-    }
-
-    // Torre mas contenida para encajar con la nueva muralla.
-    private static void buildCornerTower(ServerLevel level, int cx, int cz, int baseY) {
-        final int radius = 3;
-        final int height = 8;
-
-        for (int x = cx - radius; x <= cx + radius; x++) {
-            for (int z = cz - radius; z <= cz + radius; z++) {
-                int ground = naturalGround(level, x, z);
-                boolean edge = x == cx - radius || x == cx + radius
-                        || z == cz - radius || z == cz + radius;
-
-                for (int y = ground; y <= baseY; y++) {
-                    level.setBlock(new BlockPos(x, y, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
-                }
-
-                if (edge) {
-                    for (int dy = 1; dy <= height; dy++) {
-                        level.setBlock(new BlockPos(x, baseY + dy, z),
-                                Blocks.STONE_BRICKS.defaultBlockState(), 3);
-                    }
-                    int edgeIndex = Math.abs(x - cx) + Math.abs(z - cz);
-                    if ((edgeIndex & 1) == 0) {
-                        level.setBlock(new BlockPos(x, baseY + height + 1, z),
-                                Blocks.STONE_BRICKS.defaultBlockState(), 3);
-                    }
-                } else {
-                    level.setBlock(new BlockPos(x, baseY, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
-                    for (int dy = 1; dy < height; dy++) {
-                        level.setBlock(new BlockPos(x, baseY + dy, z), Blocks.AIR.defaultBlockState(), 3);
-                    }
-                    level.setBlock(new BlockPos(x, baseY + height, z),
-                            Blocks.STONE_BRICK_SLAB.defaultBlockState(), 3);
-                }
-            }
-        }
-
-        int ladderX = cx - radius + 1;
-        for (int dy = 1; dy < height; dy++) {
-            BlockState ladder = Blocks.LADDER.defaultBlockState()
-                    .setValue(LadderBlock.FACING, Direction.EAST);
-            level.setBlock(new BlockPos(ladderX, baseY + dy, cz), ladder, 3);
-        }
-
-        placeLantern(level, new BlockPos(cx - 2, baseY + height + 1, cz - 2));
-        placeLantern(level, new BlockPos(cx + 2, baseY + height + 1, cz - 2));
-        placeLantern(level, new BlockPos(cx - 2, baseY + height + 1, cz + 2));
-        placeLantern(level, new BlockPos(cx + 2, baseY + height + 1, cz + 2));
-    }
-
-    private static void placeLantern(ServerLevel level, BlockPos pos) {
-        if (level.getBlockState(pos).isAir()) {
-            level.setBlock(pos, Blocks.LANTERN.defaultBlockState(), 3);
-        }
-    }
-
-    private static int naturalGround(ServerLevel level, int x, int z) {
-        level.getChunk(x >> 4, z >> 4);
-        return level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
-    }
+    private record PendingVillage(ServerLevel level, BlockPos center, long executeTick) {}
+    private record PlacementKey(ServerLevel level, long pos) {}
+    private record PendingBlock(ServerLevel level, BlockPos pos, BlockState state) {}
 }
