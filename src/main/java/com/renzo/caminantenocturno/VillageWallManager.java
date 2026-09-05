@@ -14,7 +14,7 @@ import net.minecraftforge.fml.common.Mod;
 public final class VillageWallManager {
     private static final int CHECK_INTERVAL = 200;
     private static final int SEARCH_RADIUS_CHUNKS = 8;
-    private static final int WALL_RADIUS = 58;
+    private static final int WALL_RADIUS = 88;
     private static final int WALL_HEIGHT = 5;
     private static final int WALL_THICKNESS = 2;
     private static final int PASSAGE_HALF_WIDTH = 2;
