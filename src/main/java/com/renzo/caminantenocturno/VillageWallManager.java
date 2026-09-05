@@ -19,6 +19,7 @@ import java.util.Set;
 
 @Mod.EventBusSubscriber(modid=CaminanteNocturnoMod.MODID,bus=Mod.EventBusSubscriber.Bus.FORGE)
 public final class VillageWallManager {
+    // Las murallas dinámicas quedan desactivadas: serán sustituidas por piezas de estructura rígidas.
     private static final int CHECK_INTERVAL = 100;
     private static final int SEARCH_RADIUS_CHUNKS = 16;
 
@@ -34,6 +35,7 @@ public final class VillageWallManager {
 
     @SubscribeEvent
     public static void serverTick(TickEvent.ServerTickEvent event) {
+        if (true) return; // Beta 23: desactivado mientras se usa el nuevo sistema de estructuras
         if (event.phase != TickEvent.Phase.END) return;
 
         for (ServerLevel level : event.getServer().getAllLevels()) {
