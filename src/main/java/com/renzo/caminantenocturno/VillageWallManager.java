@@ -12,10 +12,10 @@ import net.minecraftforge.fml.common.Mod;
 
 @Mod.EventBusSubscriber(modid=CaminanteNocturnoMod.MODID,bus=Mod.EventBusSubscriber.Bus.FORGE)
 public final class VillageWallManager {
-    private static final int CHECK_INTERVAL = 200;
-    private static final int SEARCH_RADIUS_CHUNKS = 8;
-    private static final int WALL_RADIUS = 88;
-    private static final int WALL_HEIGHT = 5;
+    private static final int CHECK_INTERVAL = 100;
+    private static final int SEARCH_RADIUS_CHUNKS = 16;
+    private static final int WALL_RADIUS = 64;
+    private static final int WALL_HEIGHT = 4;
     private static final int WALL_THICKNESS = 2;
     private static final int PASSAGE_HALF_WIDTH = 2;
 
@@ -116,13 +116,13 @@ public final class VillageWallManager {
 
         if (((x + z) & 1) == 0) {
             level.setBlock(new BlockPos(x, y + WALL_HEIGHT + 1, z),
-                    Blocks.STONE_BRICK_WALL.defaultBlockState(), 3);
+                    Blocks.STONE_BRICKS.defaultBlockState(), 3);
         }
     }
 
     private static void buildCornerTower(ServerLevel level, int cx, int cz) {
-        final int radius = 2;
-        final int towerHeight = 7;
+        final int radius = 3;
+        final int towerHeight = 6;
 
         // Una única altura base para toda la torre.
         int baseY = level.getMinBuildHeight();
