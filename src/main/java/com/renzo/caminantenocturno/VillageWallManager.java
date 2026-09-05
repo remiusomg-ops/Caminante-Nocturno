@@ -27,6 +27,7 @@ public final class VillageWallManager {
     private static final int TOTAL_WIDTH = 5;          // base y coronacion: 5 bloques
     private static final int BODY_HEIGHT = 6;          // hasta camino de ronda
     private static final int BUTTRESS_SPACING = 6;
+    private static final int SEGMENT_LENGTH = 6;
     private static final int PASSAGE_HALF_WIDTH = 2;
 
     private static final Set<Long> SESSION_SEEN = new HashSet<>();
@@ -87,19 +88,62 @@ public final class VillageWallManager {
     }
 
     private static void buildHorizontal(ServerLevel level, BlockPos c, int minX, int maxX, int outerZ, int inward) {
-        for (int x = minX; x <= maxX; x++) {
-            boolean passage = Math.abs(x - c.getX()) <= PASSAGE_HALF_WIDTH;
-            int baseY = naturalGround(level, x, outerZ + inward);
-            buildHorizontalSection(level, x, outerZ, inward, baseY, passage, x - minX);
+        Integer previousBase = null;
+
+        for (int start = minX; start <= maxX; start += SEGMENT_LENGTH) {
+            int end = Math.min(start + SEGMENT_LENGTH - 1, maxX);
+            int sampled = sampleHorizontalSegment(level, start, end, outerZ, inward);
+
+            // Evita saltos absurdos entre piezas: cada tramo solo puede variar 1 bloque.
+            int baseY = previousBase == null
+                    ? sampled
+                    : Math.max(previousBase - 1, Math.min(previousBase + 1, sampled));
+            previousBase = baseY;
+
+            for (int x = start; x <= end; x++) {
+                boolean passage = Math.abs(x - c.getX()) <= PASSAGE_HALF_WIDTH;
+                buildHorizontalSection(level, x, outerZ, inward, baseY, passage, x - minX);
+            }
         }
     }
 
     private static void buildVertical(ServerLevel level, BlockPos c, int minZ, int maxZ, int outerX, int inward) {
-        for (int z = minZ; z <= maxZ; z++) {
-            boolean passage = Math.abs(z - c.getZ()) <= PASSAGE_HALF_WIDTH;
-            int baseY = naturalGround(level, outerX + inward, z);
-            buildVerticalSection(level, outerX, z, inward, baseY, passage, z - minZ);
+        Integer previousBase = null;
+
+        for (int start = minZ; start <= maxZ; start += SEGMENT_LENGTH) {
+            int end = Math.min(start + SEGMENT_LENGTH - 1, maxZ);
+            int sampled = sampleVerticalSegment(level, start, end, outerX, inward);
+
+            int baseY = previousBase == null
+                    ? sampled
+                    : Math.max(previousBase - 1, Math.min(previousBase + 1, sampled));
+            previousBase = baseY;
+
+            for (int z = start; z <= end; z++) {
+                boolean passage = Math.abs(z - c.getZ()) <= PASSAGE_HALF_WIDTH;
+                buildVerticalSection(level, outerX, z, inward, baseY, passage, z - minZ);
+            }
         }
+    }
+
+    private static int sampleHorizontalSegment(ServerLevel level, int start, int end, int outerZ, int inward) {
+        int[] heights = new int[end - start + 1];
+        int i = 0;
+        for (int x = start; x <= end; x++) {
+            heights[i++] = naturalGround(level, x, outerZ + inward);
+        }
+        java.util.Arrays.sort(heights);
+        return heights[heights.length / 2];
+    }
+
+    private static int sampleVerticalSegment(ServerLevel level, int start, int end, int outerX, int inward) {
+        int[] heights = new int[end - start + 1];
+        int i = 0;
+        for (int z = start; z <= end; z++) {
+            heights[i++] = naturalGround(level, outerX + inward, z);
+        }
+        java.util.Arrays.sort(heights);
+        return heights[heights.length / 2];
     }
 
     // Seccion exacta de la referencia vista de frente:
