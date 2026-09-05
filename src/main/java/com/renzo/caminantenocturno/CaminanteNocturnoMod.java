@@ -5,15 +5,16 @@ import com.renzo.caminantenocturno.entity.FrascoExplosivoEntity;
 import com.renzo.caminantenocturno.item.FrascoExplosivoItem;
 import com.renzo.caminantenocturno.recipe.FrascoExplosivoRecipe;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
-import net.minecraft.world.item.CreativeModeTabs;
+import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.crafting.RecipeSerializer;
 import net.minecraft.world.item.crafting.SimpleCraftingRecipeSerializer;
 import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
@@ -29,6 +30,7 @@ public class CaminanteNocturnoMod {
     public static final DeferredRegister<Item> ITEMS = DeferredRegister.create(ForgeRegistries.ITEMS, MODID);
     public static final DeferredRegister<SoundEvent> SOUNDS = DeferredRegister.create(ForgeRegistries.SOUND_EVENTS, MODID);
     public static final DeferredRegister<RecipeSerializer<?>> RECIPE_SERIALIZERS = DeferredRegister.create(ForgeRegistries.RECIPE_SERIALIZERS, MODID);
+    public static final DeferredRegister<CreativeModeTab> CREATIVE_TABS = DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MODID);
 
     public static final RegistryObject<EntityType<CaminanteNocturnoEntity>> CAMINANTE_NOCTURNO = ENTITY_TYPES.register(
         "caminante_nocturno",
@@ -59,18 +61,26 @@ public class CaminanteNocturnoMod {
         () -> new FrascoExplosivoItem(new Item.Properties().stacksTo(16))
     );
 
+    public static final RegistryObject<CreativeModeTab> CAMINANTE_NOCTURNO_TAB = CREATIVE_TABS.register(
+        "caminante_nocturno",
+        () -> CreativeModeTab.builder()
+            .title(Component.translatable("itemGroup.caminantenocturno"))
+            .icon(() -> CAMINANTE_NOCTURNO_SPAWN_EGG.get().getDefaultInstance())
+            .displayItems((parameters, output) -> {
+                output.accept(CAMINANTE_NOCTURNO_SPAWN_EGG.get());
+                output.accept(FRASCO_EXPLOSIVO.get());
+            })
+            .build()
+    );
+
     public CaminanteNocturnoMod() {
         IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
         ENTITY_TYPES.register(modBus);
         ITEMS.register(modBus);
         SOUNDS.register(modBus);
         RECIPE_SERIALIZERS.register(modBus);
-        modBus.addListener(this::addCreative);
+        CREATIVE_TABS.register(modBus);
         MinecraftForge.EVENT_BUS.register(this);
     }
 
-    private void addCreative(BuildCreativeModeTabContentsEvent event) {
-        if (event.getTabKey() == CreativeModeTabs.SPAWN_EGGS) event.accept(CAMINANTE_NOCTURNO_SPAWN_EGG);
-        if (event.getTabKey() == CreativeModeTabs.COMBAT) event.accept(FRASCO_EXPLOSIVO);
-    }
 }
