@@ -13,16 +13,23 @@ import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ServerLevelAccessor;
+import net.minecraft.server.level.ServerLevel;
 import javax.annotation.Nullable;
 import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 public class CaminanteNocturnoEntity extends Monster {
- private static final double RADIO_AULLIDO=256.0D;
- private static final int TIEMPO_REUNION=800;
+ private static final double RADIO_AULLIDO=512.0D;
+ private static final int TIEMPO_REUNION=1200; // 60 segundos
+ private static final Map<ServerLevel, GlobalHowl> GLOBAL_HOWLS = new WeakHashMap<>();
+
  private int howlCooldown=0;
  private int rallyTicks=0;
  private BlockPos rallyPos=null;
  @Nullable private LivingEntity rallyTarget=null;
+
+ private record GlobalHowl(BlockPos pos, @Nullable LivingEntity attacker, long expiresAt) {}
 
  public CaminanteNocturnoEntity(EntityType<? extends Monster> type,Level level){super(type,level);}
  public static AttributeSupplier.Builder createAttributes(){
@@ -46,6 +53,20 @@ public class CaminanteNocturnoEntity extends Monster {
  @Override public void aiStep(){
    super.aiStep();
    if(howlCooldown>0)howlCooldown--;
+
+   if(!level().isClientSide && level() instanceof ServerLevel sl){
+      GlobalHowl gh=GLOBAL_HOWLS.get(sl);
+      if(gh!=null){
+         if(sl.getGameTime()<=gh.expiresAt()){
+            if(rallyTicks<=0 || (rallyPos!=null && rallyPos.distSqr(gh.pos())>16.0D)){
+               rallyTo(gh.pos(), gh.attacker());
+            }
+         }else{
+            GLOBAL_HOWLS.remove(sl);
+         }
+      }
+   }
+
    if(!level().isClientSide && rallyTicks>0){
       rallyTicks--;
       if(rallyTarget!=null && rallyTarget.isAlive() && !(rallyTarget instanceof CaminanteNocturnoEntity)){
@@ -62,7 +83,7 @@ public class CaminanteNocturnoEntity extends Monster {
    boolean h=super.hurt(source,amount);
    if(h&&!level().isClientSide&&howlCooldown<=0){
       howlCooldown=100;
-      playSound(CaminanteNocturnoMod.AULLIDO.get(),3.5F,0.95F+random.nextFloat()*0.10F);
+      playSound(CaminanteNocturnoMod.AULLIDO.get(),4.0F,1.0F);
       LivingEntity a=source.getEntity() instanceof LivingEntity l?l:null;
       alertHorde(a);
    }
@@ -81,6 +102,9 @@ public class CaminanteNocturnoEntity extends Monster {
  }
  private void alertHorde(@Nullable LivingEntity attacker){
    BlockPos source=blockPosition();
+   if(level() instanceof ServerLevel sl){
+      GLOBAL_HOWLS.put(sl,new GlobalHowl(source,attacker,sl.getGameTime()+TIEMPO_REUNION));
+   }
    List<CaminanteNocturnoEntity> hs=level().getEntitiesOfClass(CaminanteNocturnoEntity.class,getBoundingBox().inflate(RADIO_AULLIDO),w->w!=this&&w.isAlive());
    for(CaminanteNocturnoEntity w:hs)w.rallyTo(source,attacker);
  }
