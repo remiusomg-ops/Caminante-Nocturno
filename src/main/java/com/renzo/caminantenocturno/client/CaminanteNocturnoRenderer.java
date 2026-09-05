@@ -17,7 +17,7 @@ public class CaminanteNocturnoRenderer extends MobRenderer<CaminanteNocturnoEnti
     }
 
     @Override protected void scale(CaminanteNocturnoEntity entity,PoseStack pose,float partialTick) {
-        pose.scale(0.95F,1.13F,0.95F);
+        pose.scale(0.94F,1.08F,0.94F);
     }
     @Override public ResourceLocation getTextureLocation(CaminanteNocturnoEntity entity) { return TEXTURE; }
 }
