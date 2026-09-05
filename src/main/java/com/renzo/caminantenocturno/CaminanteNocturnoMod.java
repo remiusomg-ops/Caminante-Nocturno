@@ -2,13 +2,13 @@ package com.renzo.caminantenocturno;
 
 import com.renzo.caminantenocturno.entity.CaminanteNocturnoEntity;
 import com.renzo.caminantenocturno.entity.FrascoExplosivoEntity;
-import com.renzo.caminantenocturno.item.FrascoExplosivoItem;
+import com.renzo.caminantenocturno.item.FrascoExplosivoItem;\nimport com.renzo.caminantenocturno.recipe.FrascoExplosivoRecipe;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.item.CreativeModeTabs;
-import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Item;\nimport net.minecraft.world.item.crafting.RecipeSerializer;\nimport net.minecraft.world.item.crafting.SimpleCraftingRecipeSerializer;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
@@ -25,6 +25,7 @@ public class CaminanteNocturnoMod {
     public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(ForgeRegistries.ENTITY_TYPES, MODID);
     public static final DeferredRegister<Item> ITEMS = DeferredRegister.create(ForgeRegistries.ITEMS, MODID);
     public static final DeferredRegister<SoundEvent> SOUNDS = DeferredRegister.create(ForgeRegistries.SOUND_EVENTS, MODID);
+    public static final DeferredRegister<RecipeSerializer<?>> RECIPE_SERIALIZERS = DeferredRegister.create(ForgeRegistries.RECIPE_SERIALIZERS, MODID);
 
     public static final RegistryObject<EntityType<CaminanteNocturnoEntity>> CAMINANTE_NOCTURNO = ENTITY_TYPES.register(
         "caminante_nocturno",
@@ -47,6 +48,9 @@ public class CaminanteNocturnoMod {
         () -> new ForgeSpawnEggItem(CAMINANTE_NOCTURNO, 0x201B1B, 0x793030, new Item.Properties())
     );
 
+    public static final RegistryObject<RecipeSerializer<FrascoExplosivoRecipe>> FRASCO_EXPLOSIVO_RECIPE =
+        RECIPE_SERIALIZERS.register("frasco_explosivo", () -> new SimpleCraftingRecipeSerializer<>(FrascoExplosivoRecipe::new));
+
     public static final RegistryObject<Item> FRASCO_EXPLOSIVO = ITEMS.register(
         "frasco_explosivo",
         () -> new FrascoExplosivoItem(new Item.Properties().stacksTo(16))
@@ -56,7 +60,7 @@ public class CaminanteNocturnoMod {
         IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
         ENTITY_TYPES.register(modBus);
         ITEMS.register(modBus);
-        SOUNDS.register(modBus);
+        SOUNDS.register(modBus);\n        RECIPE_SERIALIZERS.register(modBus);
         modBus.addListener(this::addCreative);
         MinecraftForge.EVENT_BUS.register(this);
     }
