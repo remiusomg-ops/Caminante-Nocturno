@@ -69,15 +69,22 @@ public final class VillageWallManager {
         int minZ = c.getZ() - WALL_RADIUS;
         int maxZ = c.getZ() + WALL_RADIUS;
 
+        // Guardar primero la altura natural de cada esquina. Si se calcula despues,
+        // el heightmap detecta la propia muralla y las torres crecen absurdamente.
+        int nwY = cornerTerrainBase(level, minX + 3, minZ + 3);
+        int neY = cornerTerrainBase(level, maxX - 3, minZ + 3);
+        int swY = cornerTerrainBase(level, minX + 3, maxZ - 3);
+        int seY = cornerTerrainBase(level, maxX - 3, maxZ - 3);
+
         buildHorizontal(level, c, minX, maxX, minZ, +1);
         buildHorizontal(level, c, minX, maxX, maxZ, -1);
         buildVertical(level, c, minZ, maxZ, minX, +1);
         buildVertical(level, c, minZ, maxZ, maxX, -1);
 
-        buildCornerTower(level, minX + 3, minZ + 3);
-        buildCornerTower(level, maxX - 3, minZ + 3);
-        buildCornerTower(level, minX + 3, maxZ - 3);
-        buildCornerTower(level, maxX - 3, maxZ - 3);
+        buildCornerTower(level, minX + 3, minZ + 3, nwY);
+        buildCornerTower(level, maxX - 3, minZ + 3, neY);
+        buildCornerTower(level, minX + 3, maxZ - 3, swY);
+        buildCornerTower(level, maxX - 3, maxZ - 3, seY);
     }
 
     private static void buildHorizontal(ServerLevel level, BlockPos c, int minX, int maxX, int outerZ, int inward) {
@@ -193,9 +200,9 @@ public final class VillageWallManager {
     }
 
     private static void buildHorizontalButtress(ServerLevel level, int x, int outerZ, int inward, int baseY) {
-        for (int depth = 1; depth <= 3; depth++) {
+        for (int depth = 1; depth <= 2; depth++) {
             int z = outerZ - inward * depth;
-            int height = 5 - depth;
+            int height = 3 - depth;
             int ground = groundY(level, x, z);
             for (int y = ground; y <= baseY; y++)
                 level.setBlock(new BlockPos(x, y, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
@@ -205,9 +212,9 @@ public final class VillageWallManager {
     }
 
     private static void buildVerticalButtress(ServerLevel level, int outerX, int z, int inward, int baseY) {
-        for (int depth = 1; depth <= 3; depth++) {
+        for (int depth = 1; depth <= 2; depth++) {
             int x = outerX - inward * depth;
-            int height = 5 - depth;
+            int height = 3 - depth;
             int ground = groundY(level, x, z);
             for (int y = ground; y <= baseY; y++)
                 level.setBlock(new BlockPos(x, y, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
@@ -232,14 +239,19 @@ public final class VillageWallManager {
         }
     }
 
-    private static void buildCornerTower(ServerLevel level, int cx, int cz) {
-        final int radius = 4;
-        final int height = 9;
-
+    private static int cornerTerrainBase(ServerLevel level, int cx, int cz) {
+        // Muestreo antes de colocar la muralla: evita que una torre use la muralla
+        // como "suelo" y termine con decenas de bloques de altura.
         int baseY = level.getMinBuildHeight();
-        for (int x = cx - radius; x <= cx + radius; x++)
-            for (int z = cz - radius; z <= cz + radius; z++)
+        for (int x = cx - 4; x <= cx + 4; x++)
+            for (int z = cz - 4; z <= cz + 4; z++)
                 baseY = Math.max(baseY, groundY(level, x, z));
+        return baseY;
+    }
+
+    private static void buildCornerTower(ServerLevel level, int cx, int cz, int baseY) {
+        final int radius = 4;
+        final int height = 7;
 
         for (int x = cx - radius; x <= cx + radius; x++) {
             for (int z = cz - radius; z <= cz + radius; z++) {
