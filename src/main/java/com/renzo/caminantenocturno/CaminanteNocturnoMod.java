@@ -2,13 +2,16 @@ package com.renzo.caminantenocturno;
 
 import com.renzo.caminantenocturno.entity.CaminanteNocturnoEntity;
 import com.renzo.caminantenocturno.entity.FrascoExplosivoEntity;
-import com.renzo.caminantenocturno.item.FrascoExplosivoItem;\nimport com.renzo.caminantenocturno.recipe.FrascoExplosivoRecipe;
+import com.renzo.caminantenocturno.item.FrascoExplosivoItem;
+import com.renzo.caminantenocturno.recipe.FrascoExplosivoRecipe;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.item.CreativeModeTabs;
-import net.minecraft.world.item.Item;\nimport net.minecraft.world.item.crafting.RecipeSerializer;\nimport net.minecraft.world.item.crafting.SimpleCraftingRecipeSerializer;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.crafting.RecipeSerializer;
+import net.minecraft.world.item.crafting.SimpleCraftingRecipeSerializer;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
@@ -60,7 +63,8 @@ public class CaminanteNocturnoMod {
         IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
         ENTITY_TYPES.register(modBus);
         ITEMS.register(modBus);
-        SOUNDS.register(modBus);\n        RECIPE_SERIALIZERS.register(modBus);
+        SOUNDS.register(modBus);
+        RECIPE_SERIALIZERS.register(modBus);
         modBus.addListener(this::addCreative);
         MinecraftForge.EVENT_BUS.register(this);
     }
