@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "caminantenocturno:item/caminante_nocturno_spawn_egg"
+  }
+}
