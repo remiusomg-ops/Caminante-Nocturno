@@ -1,5 +1,7 @@
 package com.renzo.caminantenocturno.client;
+
 import com.renzo.caminantenocturno.CaminanteNocturnoMod;
+import net.minecraft.client.renderer.entity.ThrownItemRenderer;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.EntityRenderersEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -12,5 +14,6 @@ public final class ClientEvents {
  }
  @SubscribeEvent public static void registerRenderers(EntityRenderersEvent.RegisterRenderers e){
    e.registerEntityRenderer(CaminanteNocturnoMod.CAMINANTE_NOCTURNO.get(),CaminanteNocturnoRenderer::new);
+   e.registerEntityRenderer(CaminanteNocturnoMod.FRASCO_EXPLOSIVO_ENTITY.get(),ThrownItemRenderer::new);
  }
 }
