@@ -48,6 +48,7 @@ public final class VillageWallManager {
 
     private static final List<PendingVillage> PENDING = new ArrayList<>();
     private static final LinkedHashMap<PlacementKey, PendingBlock> BLOCK_QUEUE = new LinkedHashMap<>();
+    private static ActiveVillage ACTIVE_VILLAGE = null;
 
     private VillageWallManager() {}
 
@@ -76,11 +77,17 @@ public final class VillageWallManager {
     public static void serverTick(TickEvent.ServerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
 
-        tickPlacements();
         MinecraftServer server = event.getServer();
-        long now = server.getTickCount();
+        tickPlacements();
 
-        if (!BLOCK_QUEUE.isEmpty()) return;
+        // Solo se confirma una aldea cuando la ultima pieza de su muralla ya fue colocada.
+        if (ACTIVE_VILLAGE != null && BLOCK_QUEUE.isEmpty()) {
+            VillageWallSavedData.get(ACTIVE_VILLAGE.level).markWalled(ACTIVE_VILLAGE.center.asLong());
+            ACTIVE_VILLAGE = null;
+        }
+
+        long now = server.getTickCount();
+        if (!BLOCK_QUEUE.isEmpty() || ACTIVE_VILLAGE != null) return;
 
         Iterator<PendingVillage> it = PENDING.iterator();
         while (it.hasNext()) {
@@ -90,7 +97,11 @@ public final class VillageWallManager {
 
             if (VillageWallSavedData.get(pending.level).isNearWalled(pending.center, DEDUP_RADIUS)) continue;
             if (generateForVillage(pending.level, pending.center)) {
-                VillageWallSavedData.get(pending.level).markWalled(pending.center.asLong());
+                if (BLOCK_QUEUE.isEmpty()) {
+                    VillageWallSavedData.get(pending.level).markWalled(pending.center.asLong());
+                } else {
+                    ACTIVE_VILLAGE = new ActiveVillage(pending.level, pending.center);
+                }
             }
             break; // one village start per tick
         }
@@ -99,6 +110,8 @@ public final class VillageWallManager {
     private static void schedule(ServerLevel level, BlockPos center) {
         if (VillageWallSavedData.get(level).isNearWalled(center, DEDUP_RADIUS)) return;
         long r2 = (long)DEDUP_RADIUS * DEDUP_RADIUS;
+        if (ACTIVE_VILLAGE != null && ACTIVE_VILLAGE.level == level
+                && ACTIVE_VILLAGE.center.distSqr(center) <= r2) return;
         for (PendingVillage p : PENDING) {
             if (p.level == level && p.center.distSqr(center) <= r2) return;
         }
@@ -122,7 +135,10 @@ public final class VillageWallManager {
             else buildings.add(new Bounds(box, 10, 7));
         }
 
-        List<Bounds> bounds = streets.isEmpty() ? buildings : streets;
+        // Usar calles + edificios evita que el contorno pase por una casa o granja periférica.
+        List<Bounds> bounds = new ArrayList<>();
+        bounds.addAll(streets);
+        bounds.addAll(buildings);
         if (bounds.isEmpty()) bounds = List.of(new Bounds(start.getBoundingBox(), 10, 7));
 
         int yCoord = yCount == 0 ? center.getY() : (int)(ySum / yCount);
@@ -395,10 +411,21 @@ public final class VillageWallManager {
     private static boolean isProtected(BlockState state) {
         return state.is(BlockTags.PLANKS) || state.is(BlockTags.LOGS) || state.is(BlockTags.WOODEN_STAIRS)
                 || state.is(BlockTags.WOODEN_SLABS) || state.is(BlockTags.DOORS) || state.is(BlockTags.BEDS)
-                || state.is(BlockTags.FENCES) || state.is(Blocks.GLASS) || state.is(Blocks.GLASS_PANE)
-                || state.is(Blocks.CHEST) || state.is(Blocks.BARREL) || state.is(Blocks.BELL)
-                || state.is(Blocks.FARMLAND) || state.is(Blocks.COMPOSTER) || state.is(Blocks.CRAFTING_TABLE)
-                || state.is(Blocks.FURNACE) || state.is(Blocks.LECTERN);
+                || state.is(BlockTags.FENCES) || state.is(BlockTags.TRAPDOORS)
+                || state.is(BlockTags.WOODEN_PRESSURE_PLATES)
+                || state.is(Blocks.GLASS) || state.is(Blocks.GLASS_PANE)
+                || state.is(Blocks.CHEST) || state.is(Blocks.TRAPPED_CHEST) || state.is(Blocks.BARREL)
+                || state.is(Blocks.BELL) || state.is(Blocks.FARMLAND)
+                || state.is(Blocks.WHEAT) || state.is(Blocks.CARROTS)
+                || state.is(Blocks.POTATOES) || state.is(Blocks.BEETROOTS)
+                || state.is(Blocks.COMPOSTER) || state.is(Blocks.CRAFTING_TABLE)
+                || state.is(Blocks.FURNACE) || state.is(Blocks.BLAST_FURNACE) || state.is(Blocks.SMOKER)
+                || state.is(Blocks.LECTERN) || state.is(Blocks.GRINDSTONE)
+                || state.is(Blocks.SMITHING_TABLE) || state.is(Blocks.STONECUTTER)
+                || state.is(Blocks.LOOM) || state.is(Blocks.CARTOGRAPHY_TABLE)
+                || state.is(Blocks.FLETCHING_TABLE) || state.is(Blocks.LADDER)
+                || state.is(Blocks.TORCH) || state.is(Blocks.WALL_TORCH)
+                || state.is(Blocks.LANTERN) || state.is(Blocks.SOUL_LANTERN);
     }
 
     private static final class Bounds {
@@ -416,6 +443,7 @@ public final class VillageWallManager {
     }
 
     private record PendingVillage(ServerLevel level, BlockPos center, long executeTick) {}
+    private record ActiveVillage(ServerLevel level, BlockPos center) {}
     private record PlacementKey(ServerLevel level, long pos) {}
     private record PendingBlock(ServerLevel level, BlockPos pos, BlockState state) {}
 }
