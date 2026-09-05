@@ -34,11 +34,10 @@ public final class VillageWallManager {
             if (level.getGameTime() % CHECK_INTERVAL != 0) continue;
 
             for (ServerPlayer player : level.players()) {
-                Pair<BlockPos, Holder<Structure>> found =
+                BlockPos center =
                         level.findNearestMapStructure(StructureTags.VILLAGE, player.blockPosition(), SEARCH_RADIUS_CHUNKS, false);
 
-                if (found == null) continue;
-                BlockPos center = found.getFirst();
+                if (center == null) continue;
                 long key = (((long)center.getX()) & 0xffffffffL) << 32 | (((long)center.getZ()) & 0xffffffffL);
                 if (!WALLED.add(key)) continue;
 
