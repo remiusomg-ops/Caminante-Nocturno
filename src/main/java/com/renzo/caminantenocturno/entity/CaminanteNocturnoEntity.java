@@ -38,7 +38,7 @@ public class CaminanteNocturnoEntity extends Monster {
    return Mob.createMobAttributes().add(Attributes.MAX_HEALTH,20).add(Attributes.ATTACK_DAMAGE,3).add(Attributes.MOVEMENT_SPEED,0.30).add(Attributes.FOLLOW_RANGE,64);
  }
  public static boolean canSpawn(EntityType<CaminanteNocturnoEntity> type,ServerLevelAccessor level,MobSpawnType reason,BlockPos pos,net.minecraft.util.RandomSource random){
-   if(reason==MobSpawnType.SPAWN_EGG||reason==MobSpawnType.COMMAND||reason==MobSpawnType.EVENT)return true;
+   if(reason==MobSpawnType.SPAWN_EGG||reason==MobSpawnType.COMMAND)return true;
    if(!level.canSeeSky(pos.above()))return false;
    return Monster.checkMonsterSpawnRules(type,level,reason,pos,random);
  }
