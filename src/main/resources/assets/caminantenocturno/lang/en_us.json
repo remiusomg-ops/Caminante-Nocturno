@@ -1,1 +1,7 @@
-{"entity.caminantenocturno.caminante_nocturno":"Night Walker","item.caminantenocturno.caminante_nocturno_spawn_egg":"Night Walker Spawn Egg","subtitles.caminantenocturno.aullido":"Night Walker howls"}
+{
+  "entity.caminantenocturno.caminante_nocturno":"Night Walker",
+  "item.caminantenocturno.caminante_nocturno_spawn_egg":"Night Walker Spawn Egg",
+  "item.caminantenocturno.frasco_explosivo":"Explosive Flask",
+  "itemGroup.caminantenocturno":"Caminante Nocturno",
+  "subtitles.caminantenocturno.aullido":"Night Walker howls"
+}
