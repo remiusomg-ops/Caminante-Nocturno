@@ -1,1 +1,6 @@
-{"entity.caminantenocturno.caminante_nocturno":"Caminante Nocturno","item.caminantenocturno.caminante_nocturno_spawn_egg":"Huevo de aparición de Caminante Nocturno","subtitles.caminantenocturno.aullido":"Caminante Nocturno aúlla"}
+{
+  "entity.caminantenocturno.caminante_nocturno":"Caminante Nocturno",
+  "item.caminantenocturno.caminante_nocturno_spawn_egg":"Huevo de aparición de Caminante Nocturno",
+  "item.caminantenocturno.frasco_explosivo":"Frasco explosivo",
+  "subtitles.caminantenocturno.aullido":"Caminante Nocturno aúlla"
+}
