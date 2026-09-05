@@ -1,10 +1,13 @@
 package com.renzo.caminantenocturno;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.StructureTags;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LadderBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -18,11 +21,11 @@ public final class VillageWallManager {
     private static final int CHECK_INTERVAL = 100;
     private static final int SEARCH_RADIUS_CHUNKS = 16;
 
-    // Proporciones inspiradas en la referencia del usuario.
+    // Medidas basadas en las cuatro fotos de referencia.
     private static final int WALL_RADIUS = 54;
-    private static final int WALL_THICKNESS = 3;
-    private static final int WALL_BODY_HEIGHT = 4;
-    private static final int MODULE = 6;
+    private static final int WALL_THICKNESS = 4;
+    private static final int WALL_HEIGHT = 5;
+    private static final int MODULE = 7;
     private static final int PASSAGE_HALF_WIDTH = 2;
 
     private static final Set<Long> SESSION_SEEN = new HashSet<>();
@@ -38,18 +41,13 @@ public final class VillageWallManager {
             VillageWallSavedData data = VillageWallSavedData.get(level);
 
             for (ServerPlayer player : level.players()) {
-                // Varias búsquedas desplazadas para no perder aldeas cuando hay más de una cerca.
                 for (int ox = -8; ox <= 8; ox += 8) {
                     for (int oz = -8; oz <= 8; oz += 8) {
                         BlockPos origin = player.blockPosition().offset(ox * 16, 0, oz * 16);
                         BlockPos center = level.findNearestMapStructure(
-                                StructureTags.VILLAGE,
-                                origin,
-                                SEARCH_RADIUS_CHUNKS,
-                                false
-                        );
-                        if (center == null) continue;
+                                StructureTags.VILLAGE, origin, SEARCH_RADIUS_CHUNKS, false);
 
+                        if (center == null) continue;
                         long key = key(center);
                         if (!SESSION_SEEN.add(key) || data.isWalled(key)) continue;
 
@@ -62,8 +60,7 @@ public final class VillageWallManager {
     }
 
     private static long key(BlockPos p) {
-        return (((long) p.getX()) & 0xffffffffL) << 32
-                | (((long) p.getZ()) & 0xffffffffL);
+        return (((long)p.getX()) & 0xffffffffL) << 32 | (((long)p.getZ()) & 0xffffffffL);
     }
 
     private static void buildWall(ServerLevel level, BlockPos c) {
@@ -77,10 +74,10 @@ public final class VillageWallManager {
         buildVertical(level, c, minZ, maxZ, minX, +1);
         buildVertical(level, c, minZ, maxZ, maxX, -1);
 
-        buildCornerTower(level, minX + 2, minZ + 2);
-        buildCornerTower(level, maxX - 2, minZ + 2);
-        buildCornerTower(level, minX + 2, maxZ - 2);
-        buildCornerTower(level, maxX - 2, maxZ - 2);
+        buildCornerTower(level, minX + 3, minZ + 3);
+        buildCornerTower(level, maxX - 3, minZ + 3);
+        buildCornerTower(level, minX + 3, maxZ - 3);
+        buildCornerTower(level, maxX - 3, maxZ - 3);
     }
 
     private static void buildHorizontal(ServerLevel level, BlockPos c, int minX, int maxX, int outerZ, int inward) {
@@ -90,8 +87,8 @@ public final class VillageWallManager {
 
             for (int x = start; x <= end; x++) {
                 boolean passage = Math.abs(x - c.getX()) <= PASSAGE_HALF_WIDTH;
-                int index = x - minX;
-                buildHorizontalSlice(level, x, outerZ, inward, baseY, passage, index);
+                int idx = x - minX;
+                buildHorizontalSlice(level, x, outerZ, inward, baseY, passage, idx);
             }
         }
     }
@@ -103,29 +100,25 @@ public final class VillageWallManager {
 
             for (int z = start; z <= end; z++) {
                 boolean passage = Math.abs(z - c.getZ()) <= PASSAGE_HALF_WIDTH;
-                int index = z - minZ;
-                buildVerticalSlice(level, outerX, z, inward, baseY, passage, index);
+                int idx = z - minZ;
+                buildVerticalSlice(level, outerX, z, inward, baseY, passage, idx);
             }
         }
     }
 
     private static int segmentBaseHorizontal(ServerLevel level, int start, int end, int outerZ, int inward) {
         int base = level.getMinBuildHeight();
-        for (int x = start; x <= end; x++) {
-            for (int t = 0; t < WALL_THICKNESS; t++) {
+        for (int x = start; x <= end; x++)
+            for (int t = 0; t < WALL_THICKNESS; t++)
                 base = Math.max(base, groundY(level, x, outerZ + inward * t));
-            }
-        }
         return base;
     }
 
     private static int segmentBaseVertical(ServerLevel level, int start, int end, int outerX, int inward) {
         int base = level.getMinBuildHeight();
-        for (int z = start; z <= end; z++) {
-            for (int t = 0; t < WALL_THICKNESS; t++) {
+        for (int z = start; z <= end; z++)
+            for (int t = 0; t < WALL_THICKNESS; t++)
                 base = Math.max(base, groundY(level, outerX + inward * t, z));
-            }
-        }
         return base;
     }
 
@@ -136,16 +129,18 @@ public final class VillageWallManager {
             return;
         }
 
-        boolean buttress = Math.floorMod(index, MODULE) == 0;
-
         for (int t = 0; t < WALL_THICKNESS; t++) {
             int z = outerZ + inward * t;
             buildWallCell(level, x, z, baseY, t == 0, t == WALL_THICKNESS - 1, index);
         }
 
-        if (buttress) {
-            int z = outerZ - inward;
-            buildButtress(level, x, z, baseY);
+        if (Math.floorMod(index, MODULE) == 0) {
+            buildHorizontalButtress(level, x, outerZ, inward, baseY);
+        }
+
+        if (Math.floorMod(index, 12) == 4) {
+            int z = outerZ + inward * (WALL_THICKNESS - 1);
+            placeLantern(level, new BlockPos(x, baseY + WALL_HEIGHT + 2, z));
         }
     }
 
@@ -156,16 +151,18 @@ public final class VillageWallManager {
             return;
         }
 
-        boolean buttress = Math.floorMod(index, MODULE) == 0;
-
         for (int t = 0; t < WALL_THICKNESS; t++) {
             int x = outerX + inward * t;
             buildWallCell(level, x, z, baseY, t == 0, t == WALL_THICKNESS - 1, index);
         }
 
-        if (buttress) {
-            int x = outerX - inward;
-            buildButtress(level, x, z, baseY);
+        if (Math.floorMod(index, MODULE) == 0) {
+            buildVerticalButtress(level, outerX, z, inward, baseY);
+        }
+
+        if (Math.floorMod(index, 12) == 4) {
+            int x = outerX + inward * (WALL_THICKNESS - 1);
+            placeLantern(level, new BlockPos(x, baseY + WALL_HEIGHT + 2, z));
         }
     }
 
@@ -173,73 +170,76 @@ public final class VillageWallManager {
                                       boolean outerEdge, boolean innerEdge, int index) {
         int ground = groundY(level, x, z);
 
-        // Cimiento hasta la cota plana del módulo.
         for (int y = ground; y <= baseY; y++) {
             level.setBlock(new BlockPos(x, y, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
         }
 
-        level.setBlock(new BlockPos(x, baseY + 1, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
-        level.setBlock(new BlockPos(x, baseY + 2, z), Blocks.COBBLESTONE.defaultBlockState(), 3);
-        level.setBlock(new BlockPos(x, baseY + 3, z), Blocks.COBBLESTONE.defaultBlockState(), 3);
-        level.setBlock(new BlockPos(x, baseY + 4, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
+        for (int dy = 1; dy <= WALL_HEIGHT; dy++) {
+            BlockState block = (dy == 2 || dy == 4)
+                    ? Blocks.CRACKED_STONE_BRICKS.defaultBlockState()
+                    : Blocks.STONE_BRICKS.defaultBlockState();
+            level.setBlock(new BlockPos(x, baseY + dy, z), block, 3);
+        }
 
-        // Camino de ronda: los tres bloques de grosor forman una plataforma transitable.
-        level.setBlock(new BlockPos(x, baseY + 5, z), Blocks.STONE_BRICK_SLAB.defaultBlockState(), 3);
+        // Camino de ronda ancho y plano.
+        level.setBlock(new BlockPos(x, baseY + WALL_HEIGHT + 1, z),
+                Blocks.STONE_BRICK_SLAB.defaultBlockState(), 3);
 
-        // Almenas gruesas en los bordes exterior e interior.
+        // Almenas gruesas de dos bloques de largo, como en la referencia.
         if ((outerEdge || innerEdge) && Math.floorMod(index, 4) < 2) {
-            level.setBlock(new BlockPos(x, baseY + 6, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
+            level.setBlock(new BlockPos(x, baseY + WALL_HEIGHT + 2, z),
+                    Blocks.STONE_BRICKS.defaultBlockState(), 3);
         }
     }
 
-    private static void buildButtress(ServerLevel level, int x, int z, int baseY) {
-        // Contrafuerte visible, como en la referencia: más ancho abajo y algo más alto.
-        level.setBlock(new BlockPos(x, baseY + 1, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
-        level.setBlock(new BlockPos(x, baseY + 2, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
-        level.setBlock(new BlockPos(x, baseY + 3, z), Blocks.COBBLESTONE.defaultBlockState(), 3);
-        level.setBlock(new BlockPos(x, baseY + 4, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
-        level.setBlock(new BlockPos(x, baseY + 5, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
-        level.setBlock(new BlockPos(x, baseY + 6, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
+    private static void buildHorizontalButtress(ServerLevel level, int x, int outerZ, int inward, int baseY) {
+        for (int depth = 1; depth <= 3; depth++) {
+            int z = outerZ - inward * depth;
+            int height = 5 - depth;
+            int ground = groundY(level, x, z);
+            for (int y = ground; y <= baseY; y++)
+                level.setBlock(new BlockPos(x, y, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
+            for (int dy = 1; dy <= height; dy++)
+                level.setBlock(new BlockPos(x, baseY + dy, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
+        }
+    }
 
-        int ground = groundY(level, x, z);
-        for (int y = ground; y <= baseY; y++) {
-            level.setBlock(new BlockPos(x, y, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
+    private static void buildVerticalButtress(ServerLevel level, int outerX, int z, int inward, int baseY) {
+        for (int depth = 1; depth <= 3; depth++) {
+            int x = outerX - inward * depth;
+            int height = 5 - depth;
+            int ground = groundY(level, x, z);
+            for (int y = ground; y <= baseY; y++)
+                level.setBlock(new BlockPos(x, y, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
+            for (int dy = 1; dy <= height; dy++)
+                level.setBlock(new BlockPos(x, baseY + dy, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
         }
     }
 
     private static void clearHorizontalPassage(ServerLevel level, int x, int outerZ, int inward, int baseY) {
         for (int t = -1; t <= WALL_THICKNESS; t++) {
             int z = outerZ + inward * t;
-            for (int y = baseY + 1; y <= baseY + 7; y++) {
+            for (int y = baseY + 1; y <= baseY + WALL_HEIGHT + 3; y++)
                 level.setBlock(new BlockPos(x, y, z), Blocks.AIR.defaultBlockState(), 3);
-            }
         }
     }
 
     private static void clearVerticalPassage(ServerLevel level, int outerX, int z, int inward, int baseY) {
         for (int t = -1; t <= WALL_THICKNESS; t++) {
             int x = outerX + inward * t;
-            for (int y = baseY + 1; y <= baseY + 7; y++) {
+            for (int y = baseY + 1; y <= baseY + WALL_HEIGHT + 3; y++)
                 level.setBlock(new BlockPos(x, y, z), Blocks.AIR.defaultBlockState(), 3);
-            }
         }
-    }
-
-    private static int groundY(ServerLevel level, int x, int z) {
-        level.getChunk(x >> 4, z >> 4);
-        return level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
     }
 
     private static void buildCornerTower(ServerLevel level, int cx, int cz) {
-        final int radius = 3;
-        final int height = 7;
+        final int radius = 4;
+        final int height = 9;
 
         int baseY = level.getMinBuildHeight();
-        for (int x = cx - radius; x <= cx + radius; x++) {
-            for (int z = cz - radius; z <= cz + radius; z++) {
+        for (int x = cx - radius; x <= cx + radius; x++)
+            for (int z = cz - radius; z <= cz + radius; z++)
                 baseY = Math.max(baseY, groundY(level, x, z));
-            }
-        }
 
         for (int x = cx - radius; x <= cx + radius; x++) {
             for (int z = cz - radius; z <= cz + radius; z++) {
@@ -247,37 +247,56 @@ public final class VillageWallManager {
                 boolean edge = x == cx - radius || x == cx + radius
                         || z == cz - radius || z == cz + radius;
 
-                for (int y = ground; y <= baseY; y++) {
+                for (int y = ground; y <= baseY; y++)
                     level.setBlock(new BlockPos(x, y, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
-                }
 
                 if (edge) {
                     for (int dy = 1; dy <= height; dy++) {
-                        level.setBlock(
-                                new BlockPos(x, baseY + dy, z),
-                                (dy == 1 || dy == 4 || dy == height
-                                        ? Blocks.STONE_BRICKS
-                                        : Blocks.COBBLESTONE).defaultBlockState(),
-                                3
-                        );
+                        BlockState block = (dy == 3 || dy == 6)
+                                ? Blocks.CRACKED_STONE_BRICKS.defaultBlockState()
+                                : Blocks.STONE_BRICKS.defaultBlockState();
+                        level.setBlock(new BlockPos(x, baseY + dy, z), block, 3);
                     }
 
-                    int ringIndex = Math.abs(x - cx) + Math.abs(z - cz);
-                    if ((ringIndex & 1) == 0) {
-                        level.setBlock(
-                                new BlockPos(x, baseY + height + 1, z),
-                                Blocks.STONE_BRICKS.defaultBlockState(),
-                                3
-                        );
+                    int edgeIndex = Math.abs(x - cx) + Math.abs(z - cz);
+                    if ((edgeIndex & 1) == 0) {
+                        level.setBlock(new BlockPos(x, baseY + height + 1, z),
+                                Blocks.STONE_BRICKS.defaultBlockState(), 3);
                     }
                 } else {
                     level.setBlock(new BlockPos(x, baseY, z), Blocks.STONE_BRICKS.defaultBlockState(), 3);
-                    for (int dy = 1; dy < height; dy++) {
+                    for (int dy = 1; dy < height; dy++)
                         level.setBlock(new BlockPos(x, baseY + dy, z), Blocks.AIR.defaultBlockState(), 3);
-                    }
-                    level.setBlock(new BlockPos(x, baseY + height, z), Blocks.STONE_BRICK_SLAB.defaultBlockState(), 3);
+
+                    level.setBlock(new BlockPos(x, baseY + height, z),
+                            Blocks.STONE_BRICK_SLAB.defaultBlockState(), 3);
                 }
             }
         }
+
+        // Acceso interior a la parte superior mediante escalera de mano.
+        int ladderX = cx - radius + 1;
+        int ladderZ = cz;
+        for (int dy = 1; dy < height; dy++) {
+            BlockState ladder = Blocks.LADDER.defaultBlockState().setValue(LadderBlock.FACING, Direction.EAST);
+            level.setBlock(new BlockPos(ladderX, baseY + dy, ladderZ), ladder, 3);
+        }
+
+        // Faroles en la azotea, como en la referencia.
+        placeLantern(level, new BlockPos(cx - 2, baseY + height + 1, cz - 2));
+        placeLantern(level, new BlockPos(cx + 2, baseY + height + 1, cz - 2));
+        placeLantern(level, new BlockPos(cx - 2, baseY + height + 1, cz + 2));
+        placeLantern(level, new BlockPos(cx + 2, baseY + height + 1, cz + 2));
+    }
+
+    private static void placeLantern(ServerLevel level, BlockPos pos) {
+        if (level.getBlockState(pos).isAir()) {
+            level.setBlock(pos, Blocks.LANTERN.defaultBlockState(), 3);
+        }
+    }
+
+    private static int groundY(ServerLevel level, int x, int z) {
+        level.getChunk(x >> 4, z >> 4);
+        return level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
     }
 }
