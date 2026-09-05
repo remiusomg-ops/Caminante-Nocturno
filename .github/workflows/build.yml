@@ -19,6 +19,8 @@ jobs:
           gradle-version: '8.8'
       - name: Build Caminante texture
         run: python3 tools/make_skin.py
+      - name: Build item textures
+        run: python3 tools/make_item_textures.py
       - run: gradle build --stacktrace
       - uses: actions/upload-artifact@v4
         with:
