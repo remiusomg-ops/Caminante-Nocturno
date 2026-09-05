@@ -23,9 +23,10 @@ import java.util.WeakHashMap;
 public class CaminanteNocturnoEntity extends Monster {
  private static final double RADIO_AULLIDO=512.0D;
  private static final int TIEMPO_REUNION=1200; // 60 segundos
+ private static final int COOLDOWN_GLOBAL_AULLIDO=160; // 8 segundos
  private static final Map<ServerLevel, GlobalHowl> GLOBAL_HOWLS = new WeakHashMap<>();
+ private static final Map<ServerLevel, Long> LAST_HOWL_TICK = new WeakHashMap<>();
 
- private int howlCooldown=0;
  private int rallyTicks=0;
  private BlockPos rallyPos=null;
  @Nullable private LivingEntity rallyTarget=null;
@@ -53,7 +54,6 @@ public class CaminanteNocturnoEntity extends Monster {
  }
  @Override public void aiStep(){
    super.aiStep();
-   if(howlCooldown>0)howlCooldown--;
 
    if(!level().isClientSide && level() instanceof ServerLevel sl){
       GlobalHowl gh=GLOBAL_HOWLS.get(sl);
@@ -82,11 +82,15 @@ public class CaminanteNocturnoEntity extends Monster {
  }
  @Override public boolean hurt(DamageSource source,float amount){
    boolean h=super.hurt(source,amount);
-   if(h&&!level().isClientSide&&howlCooldown<=0){
-      howlCooldown=100;
-      playSound(CaminanteNocturnoMod.AULLIDO.get(),4.0F,1.0F);
-      LivingEntity a=source.getEntity() instanceof LivingEntity l?l:null;
-      alertHorde(a);
+   if(h&&!level().isClientSide && level() instanceof ServerLevel sl){
+      long now=sl.getGameTime();
+      long last=LAST_HOWL_TICK.getOrDefault(sl,Long.MIN_VALUE/2);
+      if(now-last>=COOLDOWN_GLOBAL_AULLIDO){
+         LAST_HOWL_TICK.put(sl,now);
+         playSound(CaminanteNocturnoMod.AULLIDO.get(),4.0F,1.0F);
+         LivingEntity a=source.getEntity() instanceof LivingEntity l?l:null;
+         alertHorde(a);
+      }
    }
    return h;
  }
