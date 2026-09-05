@@ -17,10 +17,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.8'
-      - name: Restore binary resources
-        run: |
-          mkdir -p src/main/resources/assets/caminantenocturno/textures/entity
-          base64 -d assets-src/skin.b64 > src/main/resources/assets/caminantenocturno/textures/entity/caminante_nocturno.png
+      - name: Build Caminante texture
+        run: python3 tools/make_skin.py
       - run: gradle build --stacktrace
       - uses: actions/upload-artifact@v4
         with:
