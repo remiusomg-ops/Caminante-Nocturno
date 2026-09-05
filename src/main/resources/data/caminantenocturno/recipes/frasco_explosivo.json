@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " N ",
+    "NBN",
+    " N "
+  ],
+  "key": {
+    "N": { "item": "minecraft:iron_nugget" },
+    "B": { "item": "minecraft:glass_bottle" }
+  },
+  "result": {
+    "item": "caminantenocturno:frasco_explosivo",
+    "count": 1
+  }
+}
