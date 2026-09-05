@@ -12,7 +12,7 @@ import net.minecraft.world.entity.ai.goal.target.*;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.ServerLevelAccessor;
+import net.minecraft.world.level.ServerLevelAccessor;\nimport net.minecraft.world.item.Items;
 import net.minecraft.server.level.ServerLevel;
 import javax.annotation.Nullable;
 import java.util.List;
@@ -107,6 +107,11 @@ public class CaminanteNocturnoEntity extends Monster {
    }
    List<CaminanteNocturnoEntity> hs=level().getEntitiesOfClass(CaminanteNocturnoEntity.class,getBoundingBox().inflate(RADIO_AULLIDO),w->w!=this&&w.isAlive());
    for(CaminanteNocturnoEntity w:hs)w.rallyTo(source,attacker);
+ }
+ @Override protected void dropCustomDeathLoot(DamageSource source,int looting,boolean recentlyHit){
+   super.dropCustomDeathLoot(source,looting,recentlyHit);
+   int count=3+random.nextInt(3);
+   spawnAtLocation(Items.IRON_NUGGET,count);
  }
  @Override public boolean canAttack(LivingEntity t){return !(t instanceof CaminanteNocturnoEntity)&&super.canAttack(t);}
  @Nullable @Override protected SoundEvent getAmbientSound(){return SoundEvents.ZOMBIE_AMBIENT;}
